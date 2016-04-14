@@ -90,6 +90,10 @@ public:
     timingdriven_placement(const std::string & dot_verilog_file, const std::string & dot_def_file, const std::string & dot_lef_file, const std::string & dot_lib_late, const std::string & dot_lib_early, double clock_in_picosseconds);
     virtual ~timingdriven_placement();
 
+    std::vector<Pin> cell_pins(Cell cell) const {
+        return m_netlist.cell_pins(cell);
+    }
+
     Point cell_position(Cell cell) const {
         return m_placement.cell_position(cell);
     }
