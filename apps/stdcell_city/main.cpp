@@ -4,7 +4,7 @@
 #include <fstream>
 
 
-
+#include "color.h"
 #include <random>
 
 struct command_line_args {
@@ -53,6 +53,7 @@ std::ostream& operator<<(std::ostream& out, const rectangle & f) {
 }
 
 struct cube {
+    std::size_t material_id;
     std::vector<vertex> vertices;
     std::vector<face> faces;
 
@@ -109,23 +110,87 @@ struct material {
     double ni{1.000000};
     double d{1.000000};
     double illum{2};
+
+
+    bool operator<(const material& o) const {
+        return name < o.name;
+    }
 };
 
-// 255 0 0
-// 255 62 0
-// 255 125 0
-// 255 187 0
-// 255 255 0
-// 187 255 0
-// 125 255 0
-// 62 255 0
-// 0 255 0
+
+std::vector<material> create_materials()
+{
+    std::vector<material> materials;
+
+    for(double angle{0.0}; angle < 120.0; angle += 5.0)
+    {
+        material m;
+        m.name = "mat." + std::to_string(materials.size());
+        hsv color;
+        color.h = angle;
+        color.s = 0.5;
+        color.v = 1.0;
+        rgb rgbcolor = hsv2rgb(color);
+        m.kd[0] = rgbcolor.r;
+        m.kd[1] = rgbcolor.g;
+        m.kd[2] = rgbcolor.b;
+        materials.push_back(m);
+    }
+    return materials;
+}
+
+std::vector<material> create_blues() {
+    std::vector<material> materials;
+
+    for(double angle{180.0}; angle < 220.0; angle += 10.0)
+    {
+        material m;
+        m.name = "blue." + std::to_string(materials.size());
+        hsv color;
+        color.h = angle;
+        color.s = 0.5;
+        color.v = 1.0;
+        rgb rgbcolor = hsv2rgb(color);
+        m.kd[0] = rgbcolor.r;
+        m.kd[1] = rgbcolor.g;
+        m.kd[2] = rgbcolor.b;
+        materials.push_back(m);
+    }
+    return materials;
+}
 
 
 int main(int argc, char **argv) {
 
+
+
     using namespace ophidian;
 
+    std::ofstream out2("city.mtl", std::ofstream::out);
+
+    std::cout << "writing materials file" << std::endl;
+    auto materials = create_materials();
+    auto blues = create_blues();
+    std::vector<material> all_materials;
+    all_materials.insert(all_materials.end(), materials.begin(), materials.end());
+    all_materials.insert(all_materials.end(), blues.begin(), blues.end());
+
+    for(const material & m : all_materials)
+    {
+        out2 << "newmtl " << m.name << std::endl;
+        out2 << "Ns " << m.ns << std::endl;
+        out2 << "Ka " << m.ka[0] << " " << m.ka[1] << " " << m.ka[2] << std::endl;
+        out2 << "Kd " << m.kd[0] << " " << m.kd[1] << " " << m.kd[2] << std::endl;
+        out2 << "Ks " << m.ks[0] << " " << m.ks[1] << " " << m.ks[2] << std::endl;
+        out2 << "Ke " << m.ke[0] << " " << m.ke[1] << " " << m.ke[2] << std::endl;
+        out2 << "Ni " << m.ni << std::endl;
+        out2 << "d " << m.d << std::endl;
+        out2 << "illum " << m.illum << std::endl;
+        out2 << std::endl;
+    }
+
+    return 0;
+    std::ofstream out("city.obj", std::ofstream::out);
     // reads command line arguments
     command_line_args args;
 
@@ -163,7 +228,6 @@ int main(int argc, char **argv) {
     //    }
 
 
-    std::ofstream out("city.obj", std::ofstream::out);
     //    std::ostream & out = std::cout;
     std::size_t current{1};
 
@@ -172,7 +236,7 @@ int main(int argc, char **argv) {
     std::vector<bool> macroblock;
 
 
-    std::uniform_int_distribution<int> dist(1,5);
+    std::uniform_int_distribution<int> dist(0,blues.size()-1);
     std::default_random_engine engine;
 
 
@@ -188,7 +252,6 @@ int main(int argc, char **argv) {
     geometry::append(window, geometry::point<double>(ORIGIN.x()+SIZE.x(),ORIGIN.y()));
     geometry::append(window, ORIGIN);
     geometry::correct(window);
-
 
     std::cout << "creating rects" << std::endl;
 
@@ -219,26 +282,64 @@ int main(int argc, char **argv) {
     }
 
 
-    std::cout << "extruding rects" << std::endl;
-    std::vector<cube> cubes;
-    cubes.reserve(rects.size());
+    tdp.update_timing();
 
-    std::size_t i = 0;
-    for(auto r : rects)
+    timingdriven_placement::TimeType min_value{std::numeric_limits<timingdriven_placement::TimeType>::infinity()};
+
+    std::vector<timingdriven_placement::TimeType> slacks;
+
+    for(auto cell : entities)
     {
-        int height = tdp.cell_pins(entities[i]).size();
+        auto cell_pins = tdp.cell_pins(cell);
+        timingdriven_placement::TimeType worst_slack{std::numeric_limits<timingdriven_placement::TimeType>::infinity()};
+        for(auto pin : cell_pins)
+            worst_slack = std::min(std::min(tdp.late_fall_slack(pin), tdp.late_rise_slack(pin)), worst_slack);
+        min_value = std::min(min_value, worst_slack);
+        slacks.push_back(worst_slack);
+    }
+    std::cout << "min slack = " << min_value << std::endl;
+    std::map< material, std::vector<cube> > material_assignment; // key = material id, values = entity id
+    for(std::size_t i{0}; i < entities.size(); ++i)
+    {
+        auto slack = slacks[i];
+        std::size_t id;
+        double height = static_cast<double>(tdp.cell_pins(entities[i]).size())+1.0;
         if(macroblock[i])
-            height = log(height);
-        cubes.emplace_back(r, static_cast<double>(height));
-        ++i;
+            height = 10.0;
+        cube newcube(rects[i], height);
+        if(slack < 0*boost::units::si::second)
+        {
+            slack -= min_value;
+            double position = slack / -min_value;
+            id = position * materials.size();
+            newcube.material_id = id;
+            material_assignment[materials[id]].push_back( newcube );
+        } else {
+            id = dist(engine);
+            newcube.material_id = id;
+            material_assignment[blues[id]].push_back( newcube );
+        }
     }
 
 
     std::cout << "writing cubes to file" << std::endl;
 
-    i = 0;
-    for(auto cube : cubes)
-        cube.print(out, i++);
+
+    out << "mtllib city.mtl" << std::endl;
+    out << "o city.001" << std::endl;
+    out << "vn 0.0000 1.0000 0.0000\nvn 1.0000 0.0000 0.0000\nvn 0.0000 0.0000 -1.0000" << std::endl;
+    std::size_t i{0};
+    for(auto mat : material_assignment)
+    {
+        auto & the_material = mat.first;
+        out << "usemtl " << the_material.name << std::endl;
+        for(auto cube : mat.second)
+            cube.print(out, i++);
+    }
+
+
+
+
 
 
     std::cout << macroblock_count << " macroblocks" << std::endl;

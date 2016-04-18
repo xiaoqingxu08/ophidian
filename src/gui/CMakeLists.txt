@@ -1,0 +1,5 @@
+find_package( Boost 1.59 )
+INCLUDE_DIRECTORIES( ${Boost_INCLUDE_DIR} ${SFML_INCLUDE_DIR})
+add_library (gui canvas.cpp)
+target_include_directories (gui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries( gui entity ${Boost_LIBRARIES} ${SFML_LIBRARIES})
